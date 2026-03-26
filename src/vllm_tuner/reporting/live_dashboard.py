@@ -30,6 +30,23 @@ from vllm_tuner.core.models import BenchmarkResult, StudyConfig, TrialResult, Tr
 _MAX_LOG_LINES = 50
 _REFRESH_RATE = 4  # Hz
 
+
+def _is_jupyter() -> bool:
+    """Return True when running inside a Jupyter / IPython kernel.
+
+    Jupyter notebooks cannot handle Rich's Live alternate-screen mode —
+    ANSI cursor-movement codes are rendered as literal characters and each
+    refresh produces a new block of output instead of updating in-place.
+    """
+    try:
+        from IPython import get_ipython
+
+        shell = get_ipython()
+        return shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell"
+    except ImportError:
+        return False
+
+
 # Sparkline characters
 _SPARK = "▁▂▃▄▅▆▇█"
 
@@ -68,7 +85,11 @@ class LiveDashboard:
 
     def __init__(self, study_config: StudyConfig):
         self._config = study_config
-        self._console = Console(force_terminal=True)
+        self._is_jupyter = _is_jupyter()
+        # In Jupyter, let Rich auto-detect the environment so it does not emit
+        # ANSI cursor-movement codes that would appear as literal characters.
+        # In a real terminal (or CI), force terminal mode to preserve styling.
+        self._console = Console() if self._is_jupyter else Console(force_terminal=True)
         self._live: Live | None = None
 
         # State
@@ -100,6 +121,15 @@ class LiveDashboard:
         from vllm_tuner.helper.logging import restore_console, suppress_console
 
         self._start_time = time.monotonic()
+
+        if self._is_jupyter:
+            # Jupyter notebooks cannot handle Rich Live / alternate-screen mode.
+            # Fall back to simple line-by-line progress printed to the notebook
+            # cell output.  suppress_console() is intentionally skipped so that
+            # loguru log lines remain visible.
+            yield self
+            return
+
         is_interactive = self._console.is_terminal
         self._live = Live(
             self._build_layout(),
@@ -152,17 +182,31 @@ class LiveDashboard:
     def on_study_start(self) -> None:
         self._phase = "baseline"
         self._phase_detail = "Running baseline benchmark..."
+        if self._is_jupyter:
+            self._console.print(
+                f"[bold cyan]vLLM Tuner[/bold cyan]  {self._config.model}  "
+                f"[dim]{self._config.study.name}[/dim]"
+            )
         self._refresh()
 
     def on_baseline_start(self) -> None:
         self._phase = "baseline"
         self._phase_detail = "Running baseline with default parameters"
+        if self._is_jupyter:
+            self._console.print("  [yellow]◉[/yellow] Running baseline benchmark...")
         self._refresh()
 
     def on_baseline_complete(self, result: BenchmarkResult) -> None:
         self._baseline_result = result
         self._phase = "optimizing"
         self._phase_detail = ""
+        if self._is_jupyter:
+            self._console.print(
+                f"  [green]✓[/green] Baseline: "
+                f"[bold]{result.output_tokens_per_sec:.1f}[/bold] tok/s  "
+                f"{result.throughput_req_per_sec:.2f} req/s  "
+                f"P95={result.p95_latency_ms:.0f}ms"
+            )
         self._refresh()
 
     def on_trial_start(self, trial_number: int, params: dict[str, Any]) -> None:
@@ -170,6 +214,9 @@ class LiveDashboard:
         self._phase = "optimizing"
         self._phase_detail = f"Trial #{trial_number}"
         self._server_logs.clear()
+        if self._is_jupyter:
+            n_total = self._config.optimization.n_trials
+            self._console.print(f"  [blue]◉[/blue] Trial {trial_number}/{n_total}...")
         self._refresh()
 
     def on_server_starting(self, cmd: str) -> None:
@@ -213,11 +260,25 @@ class LiveDashboard:
         # Surface error in log panel
         if result.error_message:
             self._server_logs.append(f"[ERROR] Trial #{result.trial_number}: {result.error_message}")
+        if self._is_jupyter:
+            if result.status == TrialStatus.COMPLETED and result.benchmark:
+                bm = result.benchmark
+                self._console.print(
+                    f"  [green]✓[/green] Trial {result.trial_number}: "
+                    f"[bold]{bm.output_tokens_per_sec:.1f}[/bold] tok/s  "
+                    f"P95={bm.p95_latency_ms:.0f}ms"
+                )
+            else:
+                self._console.print(
+                    f"  [red]✗[/red] Trial {result.trial_number}: {result.error_message or 'failed'}"
+                )
         self._refresh()
 
     def on_study_complete(self) -> None:
         self._phase = "complete"
         self._phase_detail = "Optimization complete"
+        if self._is_jupyter:
+            self._console.print("[bold green]✓ Optimization complete[/bold green]")
         self._refresh()
 
     # ── Full-screen layout ─────────────────────────────────
