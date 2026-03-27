@@ -11,6 +11,7 @@ Provides a btop-style full-screen terminal UI with:
 
 from __future__ import annotations
 
+import os
 import shutil
 import threading
 import time
@@ -38,6 +39,9 @@ def _is_jupyter() -> bool:
     ANSI cursor-movement codes are rendered as literal characters and each
     refresh produces a new block of output instead of updating in-place.
     """
+    if any(var in os.environ for var in ("COLAB_GPU", "JPY_PARENT_PID", "JPY_SESSION_NAME")):
+        return True
+
     try:
         from IPython import get_ipython
 
