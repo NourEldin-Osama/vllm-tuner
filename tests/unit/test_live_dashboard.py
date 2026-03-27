@@ -45,7 +45,7 @@ class TestLiveDashboardJupyterMode:
     def test_jupyter_mode_skips_live_display(self, sample_study_config):
         """In Jupyter mode, live_context should yield without creating a Live instance."""
         dash = LiveDashboard(sample_study_config)
-        dash._is_jupyter = True
+        dash._use_live = False
 
         entered = False
         with dash.live_context():
@@ -55,25 +55,34 @@ class TestLiveDashboardJupyterMode:
 
         assert entered
 
-    def test_non_jupyter_mode_uses_force_terminal(self, sample_study_config):
-        """In non-Jupyter mode the console reports is_terminal=True even without a TTY."""
+    def test_non_jupyter_non_terminal_mode_skips_live(self, sample_study_config):
+        """In non-Jupyter but non-terminal env, live mode should still be disabled."""
         with patch("vllm_tuner.reporting.live_dashboard._is_jupyter", return_value=False):
             dash = LiveDashboard(sample_study_config)
-        assert dash._console.is_terminal is True
+        assert dash._use_live is False
 
-    def test_jupyter_mode_console_no_force_terminal(self, sample_study_config):
-        """In Jupyter mode the console should NOT be forced to terminal mode."""
+    def test_jupyter_mode_skips_live(self, sample_study_config):
+        """In Jupyter mode live mode is disabled."""
         with patch("vllm_tuner.reporting.live_dashboard._is_jupyter", return_value=True):
             dash = LiveDashboard(sample_study_config)
-        # In a non-TTY test env, is_terminal is False when force_terminal is not set.
-        assert dash._console.is_terminal is False
+        assert dash._use_live is False
+
+    def test_non_jupyter_terminal_mode_enables_live(self, sample_study_config):
+        """In non-Jupyter terminal mode, use Live dashboard rendering."""
+        mock_console = MagicMock()
+        mock_console.is_terminal = True
+        with patch("vllm_tuner.reporting.live_dashboard._is_jupyter", return_value=False), patch(
+            "vllm_tuner.reporting.live_dashboard.Console", return_value=mock_console
+        ):
+            dash = LiveDashboard(sample_study_config)
+        assert dash._use_live is True
 
     def test_jupyter_event_callbacks_do_not_crash(
         self, sample_study_config, sample_benchmark_result, sample_trial_result
     ):
         """All event callbacks should run without errors in Jupyter mode."""
         dash = LiveDashboard(sample_study_config)
-        dash._is_jupyter = True
+        dash._use_live = False
 
         with dash.live_context():
             dash.on_study_start()
