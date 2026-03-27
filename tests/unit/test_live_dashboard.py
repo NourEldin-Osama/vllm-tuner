@@ -2,12 +2,15 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from vllm_tuner.reporting.live_dashboard import LiveDashboard, _is_jupyter
 
 
 class TestIsJupyter:
-    def test_returns_true_for_colab_subprocess_env(self):
-        with patch.dict("os.environ", {"COLAB_GPU": "1"}, clear=True):
+    @pytest.mark.parametrize("env_var", ["COLAB_GPU", "JPY_PARENT_PID", "JPY_SESSION_NAME"])
+    def test_returns_true_for_colab_subprocess_env(self, env_var):
+        with patch.dict("os.environ", {env_var: "1"}, clear=True):
             assert _is_jupyter() is True
 
     def test_returns_false_without_ipython(self):
